@@ -1,18 +1,20 @@
-module Sortable exposing (State, Msg, Item, init, update, subscriptions, item, li, list, ol, ul, isDragging, insertAt)
+module Sortable exposing (State, Msg, ViewDetails, Config, Sort, init, update, subscriptions, config, list)
 
-{-| Sortable provides list sorting functionality
+{-| Sortable module provides the tools to easily create a sortable list.
 
-# Types
-@docs State, Msg, Item
+# State
+@docs State, init, Msg, update, subscriptions
 
-# Infrastructure
-@docs init, update, subscriptions
+# Configuration
+@docs Config, config, ViewDetails
 
-# Helpers
-@docs isDragging, insertAt
+# View
+@docs list
 
-# Sorting
-@docs list, ol, ul, item, li
+# Events
+@docs Sort
+
+
 -}
 
 import Html exposing (..)
@@ -20,39 +22,50 @@ import Html.Attributes exposing (..)
 import Html.Events exposing (..)
 import Html.Keyed exposing (..)
 import Mouse
-import Json.Decode as Decode
+import Json.Decode as Json
+import BoundingBox
+import Math.Vector2 as Vec2
 import DOM
+import DOM.Window
 
 
--- Model
+-- State
 
 
-{-| State represents the state of the sort
+{-| DraggingItem represents the model of the current drag.
+
+bounds:
+the bounds of the dragging item dom node, translated such that the
+dragStart position is locationed a coord 0,0
+
+prevPos:
+previous position of the pointer relative to the viewport
+
+currentPos:
+current position of the pointer relative to the viewport
+-}
+type alias DraggingItem =
+    { id : String
+    , bounds : Rect
+    , hasDragged : Bool
+    , prevPos : Position
+    , currentPos : Position
+    }
+
+
+{-| The state of sorting.
 -}
 type State
     = Idle
-    | Delayed DraggingModel
-    | Dragging DraggingModel
+    | Dragging DraggingItem
 
 
-{-| DraggingModel represents the model of the current drag
--}
-type alias DraggingModel =
-    { itemID : String
-    , itemRect : Rectangle
-    , dragStart : Mouse.Position
-    , dragCurrent : Mouse.Position
-    }
+type alias Rect =
+    BoundingBox.BoundingBox
 
 
-{-| Rectangle represents the dimensions of a dom node
--}
-type alias Rectangle =
-    { top : Int
-    , left : Int
-    , width : Int
-    , height : Int
-    }
+type alias Position =
+    Vec2.Vec2
 
 
 {-| The initial state of a sortable list
@@ -62,16 +75,17 @@ init =
     Idle
 
 
-{-| isDragging returns true when a list item is currently being dragged.
--}
-isDragging : State -> Bool
-isDragging state =
-    case state of
-        Dragging _ ->
-            True
 
-        _ ->
-            False
+-- Events
+
+
+{-| Sort event is returned when an item has changed location
+-}
+type alias Sort =
+    { listID : String
+    , itemID : String
+    , index : Int
+    }
 
 
 
@@ -81,191 +95,364 @@ isDragging state =
 {-| Msg represents a sortable list message
 -}
 type Msg
-    = MouseDown String Mouse.Position Rectangle
-    | MouseMove Mouse.Position
+    = MouseDown (List String) (Maybe String) Position
+    | MouseMove String (List String) Position
     | MouseUp
+
+
+isOver : String -> Position -> Result DOM.Error Bool
+isOver selector clientPosition =
+    clientPosition
+        |> Vec2.add (Vec2.fromTuple ( DOM.Window.scrollLeft (), DOM.Window.scrollTop () ))
+        |> (\p -> DOM.Position (Vec2.getX p) (Vec2.getY p))
+        |> DOM.isOver selector
+
+
+isOverItem : String -> Position -> Bool
+isOverItem itemID position =
+    let
+        itemSelector =
+            classSelector (itemClass itemID)
+    in
+        isOver itemSelector position
+            |> Result.toMaybe
+            |> Maybe.withDefault False
+
+
+isOverItemHandle : String -> String -> Position -> Bool
+isOverItemHandle itemID handle position =
+    let
+        itemSelector =
+            classSelector (itemClass itemID)
+
+        handleSelector =
+            itemSelector ++ " " ++ classSelector handle
+    in
+        isOver handleSelector position
+            |> Result.toMaybe
+            |> Maybe.withDefault False
+
+
+getItemRectSync : String -> Maybe Rect
+getItemRectSync itemID =
+    let
+        dimensionsToRect dimensions =
+            BoundingBox.fromCorners
+                (Vec2.fromTuple ( dimensions.left, dimensions.top ))
+                (Vec2.fromTuple ( dimensions.right, dimensions.bottom ))
+    in
+        DOM.getDimensionsSync (classSelector <| itemClass itemID)
+            |> Result.map dimensionsToRect
+            |> Result.toMaybe
 
 
 {-| update returns a new state
 -}
-update : Msg -> State -> State
-update msg state =
+update : (Sort -> msg) -> msg -> Msg -> State -> ( State, Maybe msg )
+update toSort toEnd msg state =
     case ( state, msg ) of
-        ( Idle, MouseDown itemID mousePos itemRect ) ->
-            Delayed
-                { itemID = itemID
-                , itemRect = itemRect
-                , dragStart = mousePos
-                , dragCurrent = mousePos
-                }
+        ( Idle, MouseDown itemIDS handle position ) ->
+            let
+                itemAtPosition itemID =
+                    case handle of
+                        Just h ->
+                            isOverItemHandle itemID h position
 
-        ( Delayed model, MouseMove mousePos ) ->
-            Dragging { model | dragCurrent = mousePos }
+                        Nothing ->
+                            isOverItem itemID position
+            in
+                case find itemAtPosition itemIDS of
+                    Just itemID ->
+                        case getItemRectSync itemID of
+                            Just bounds ->
+                                ( Dragging
+                                    { id = itemID
+                                    , bounds = BoundingBox.translate (Vec2.negate position) bounds
+                                    , prevPos = position
+                                    , currentPos = position
+                                    , hasDragged = False
+                                    }
+                                , Nothing
+                                )
 
-        ( Dragging model, MouseUp ) ->
-            Idle
+                            Nothing ->
+                                ( state, Nothing )
+
+                    Nothing ->
+                        ( state, Nothing )
+
+        ( Dragging draggingItem, MouseMove listID itemIDS position ) ->
+            let
+                draggingItem_ =
+                    { draggingItem
+                        | prevPos = draggingItem.currentPos
+                        , currentPos = position
+                        , hasDragged = draggingItem.hasDragged || draggingItem.currentPos /= position
+                    }
+
+                sort =
+                    case indexedFind (\itemID -> itemID /= draggingItem_.id && isOverItem itemID position) itemIDS of
+                        Just ( index, itemID ) ->
+                            case getItemRectSync itemID of
+                                Just bounds ->
+                                    if detectSideIntersect draggingItem_.prevPos draggingItem_.currentPos bounds then
+                                        Just <|
+                                            toSort
+                                                { listID = listID
+                                                , itemID = draggingItem_.id
+                                                , index = index
+                                                }
+                                    else
+                                        Nothing
+
+                                Nothing ->
+                                    Nothing
+
+                        Nothing ->
+                            Nothing
+            in
+                ( Dragging draggingItem_, sort )
+
+        ( Dragging _, MouseUp ) ->
+            ( Idle, Just toEnd )
 
         _ ->
-            (state)
-
-
-
--- Subscriptions
+            ( state, Nothing )
 
 
 {-| subscribes to various global events
 -}
 subscriptions : State -> Sub Msg
 subscriptions state =
-    case state of
-        Dragging _ ->
-            Sub.batch
-                [ Mouse.moves MouseMove
-                , Mouse.ups (\_ -> MouseUp)
-                ]
-
-        _ ->
-            Sub.none
-
-
-
--- Item Node
-
-
-{-| Item represents an item in the sortable list
--}
-type Item msg
-    = Item
-        { tag : String
-        , id : String
-        , attributes : List (Attribute msg)
-        , children : List (Html msg)
-        }
-
-
-{-| creates a list item tag of a specified type.
--}
-item : String -> String -> List (Attribute msg) -> List (Html msg) -> Item msg
-item tag id attributes children =
-    Item
-        { tag = tag
-        , id = id
-        , attributes = attributes
-        , children = children
-        }
-
-
-{-| creates an li list item tag.
--}
-li : String -> List (Attribute msg) -> List (Html msg) -> Item msg
-li id attributes children =
-    item "li" id attributes children
-
-
-
--- List Node
-
-
-{-| creates a list tag of a specified type.
--}
-list : (Msg -> msg) -> (String -> String -> Int -> msg) -> String -> State -> String -> List (Attribute msg) -> List (Item msg) -> Html msg
-list msg onMove id state tag attributes items =
     let
-        itemNodes =
-            (List.indexedMap (itemView msg onMove state id) items)
-
-        cloneNode : List ( String, Html msg )
-        cloneNode =
-            case state of
-                Dragging model ->
-                    items
-                        |> List.filter (\(Item item) -> item.id == model.itemID)
-                        |> List.map (cloneView model)
-
-                _ ->
-                    []
-
-        childNodes =
-            itemNodes ++ cloneNode
+        positionToPosition pos =
+            MouseMove "" [] (Vec2.fromTuple ( pos.clientX, pos.clientY ))
     in
-        Html.Keyed.node tag attributes childNodes
+        case state of
+            Dragging _ ->
+                Sub.batch
+                    [ Mouse.ups (\_ -> MouseUp)
+                    , Mouse.moves positionToPosition
+                    ]
+
+            _ ->
+                Sub.none
 
 
-{-| creates an ol list tag.
+
+-- View
+
+
+{-| ViewDetails represent a set of attributes and child nodes
 -}
-ol : (Msg -> msg) -> (String -> String -> Int -> msg) -> String -> State -> List (Attribute msg) -> List (Item msg) -> Html msg
-ol msg onMove id model attributes items =
-    list msg onMove id model "ol" attributes items
+type alias ViewDetails msg =
+    { attributes : List (Attribute msg)
+    , children : List (Html msg)
+    }
 
 
-{-| creates an ul list tag.
+{-| Config is the set of options for a sortable list.
 -}
-ul : (Msg -> msg) -> (String -> String -> Int -> msg) -> String -> State -> List (Attribute msg) -> List (Item msg) -> Html msg
-ul msg onMove id model attributes items =
-    list msg onMove id model "ul" attributes items
+type Config item msg
+    = Config
+        { id : String
+        , tag : String
+        , attributes : List (Attribute msg)
+        , itemTag : String
+        , item : item -> ViewDetails msg
+        , handle : Maybe String
+        , toMsg : Msg -> msg
+        , toID : item -> String
+        }
 
 
-itemView : (Msg -> msg) -> (String -> String -> Int -> msg) -> State -> String -> Int -> Item msg -> ( String, Html msg )
-itemView msg onMove state listID index (Item item) =
+{-| config returns a Config type.
+-}
+config :
+    String
+    -> String
+    -> List (Attribute msg)
+    -> String
+    -> (item -> ViewDetails msg)
+    -> Maybe String
+    -> (Msg -> msg)
+    -> (item -> String)
+    -> Config item msg
+config id tag attributes itemTag item handle toMsg toID =
+    Config
+        { id = id
+        , tag = tag
+        , attributes = attributes
+        , itemTag = itemTag
+        , item = item
+        , handle = handle
+        , toMsg = toMsg
+        , toID = toID
+        }
+
+
+{-| renders a list of sortable items.
+-}
+list : Config item msg -> State -> List item -> Html msg
+list (Config config) state items =
     let
-        draggingItemAttributes =
-            [ style
-                [ ( "opacity", "0.5" )
-                ]
-            ]
+        itemIDS =
+            List.map config.toID items
 
-        siblingItemAttributes draggingModel =
-            [ onMouseMove <| onMove listID draggingModel.itemID index
-            ]
+        onMouseDown =
+            Html.Attributes.map config.toMsg <|
+                onWithOptions "mousedown"
+                    { defaultOptions | preventDefault = True }
+                    (Json.map (MouseDown itemIDS config.handle) clientPosition)
 
-        idleItemAttributes =
-            [ Html.Attributes.map msg (onMouseDown (MouseDown item.id))
-            , style [ ( "cursor", "move" ) ]
-            ]
+        onMouseMove draggingItem =
+            Html.Attributes.map config.toMsg <|
+                onWithOptions "mousemove"
+                    { defaultOptions | preventDefault = True }
+                    (Json.map (MouseMove config.id itemIDS) clientPosition)
 
         attributes =
-            item.attributes
+            config.attributes
                 ++ case state of
-                    Dragging model ->
-                        if item.id == model.itemID then
-                            draggingItemAttributes
-                        else
-                            siblingItemAttributes model
+                    Dragging draggingItem ->
+                        [ onMouseMove draggingItem ]
 
-                    _ ->
-                        idleItemAttributes
+                    Idle ->
+                        [ onMouseDown ]
+
+        itemChildren =
+            case state of
+                Dragging draggingItem ->
+                    if draggingItem.hasDragged then
+                        List.map
+                            (\item ->
+                                if config.toID item == draggingItem.id then
+                                    draggingItemView (Config config) item
+                                else
+                                    itemView (Config config) item
+                            )
+                            items
+                    else
+                        List.map (itemView (Config config)) items
+
+                Idle ->
+                    List.map (itemView (Config config)) items
+
+        cloneChildren =
+            case state of
+                Idle ->
+                    []
+
+                Dragging draggingItem ->
+                    if draggingItem.hasDragged then
+                        items
+                            |> List.filter (\item -> config.toID item == draggingItem.id)
+                            |> List.map (cloneView (Config config) draggingItem)
+                    else
+                        []
+
+        children =
+            itemChildren ++ cloneChildren
     in
-        ( item.id, Html.node item.tag attributes item.children )
+        Html.Keyed.node config.tag attributes children
 
 
-cloneView : DraggingModel -> Item msg -> ( String, Html msg )
-cloneView model (Item item) =
+draggingItemView : Config item msg -> item -> ( String, Html msg )
+draggingItemView (Config config) item =
     let
-        dragDeltaX =
-            model.dragCurrent.x - model.dragStart.x
+        id =
+            config.toID item
 
-        dragDeltaY =
-            model.dragCurrent.y - model.dragStart.y
+        viewData =
+            (config.item item)
 
-        left =
-            model.itemRect.left + dragDeltaX
+        attributes =
+            viewData.attributes ++ [ class (itemClass id), style [ ( "opacity", "0.5" ) ] ]
+
+        children =
+            viewData.children
+    in
+        ( id, Html.node config.itemTag attributes children )
+
+
+itemView : Config item msg -> item -> ( String, Html msg )
+itemView (Config config) item =
+    let
+        id =
+            config.toID item
+
+        viewData =
+            (config.item item)
+
+        attributes =
+            viewData.attributes ++ [ class (itemClass id) ]
+
+        children =
+            viewData.children
+    in
+        ( id, Html.node config.itemTag attributes children )
+
+
+cloneView : Config item msg -> DraggingItem -> item -> ( String, Html msg )
+cloneView (Config config) draggingItem item =
+    let
+        id =
+            "clone-" ++ config.toID item
+
+        viewData =
+            config.item item
+
+        bounds =
+            BoundingBox.translate draggingItem.currentPos draggingItem.bounds
+
+        topLeft =
+            BoundingBox.bottomLeft bounds
 
         top =
-            model.itemRect.top + dragDeltaY
+            Vec2.getY topLeft
 
-        cloneAttributes =
-            [ style
-                [ ( "position", "absolute" )
-                , ( "top", px top )
-                , ( "left", px left )
-                , ( "width", px model.itemRect.width )
-                , ( "height", px model.itemRect.height )
-                , ( "z-index", "9999" )
-                , ( "pointer-events", "none" )
-                ]
-            ]
+        left =
+            Vec2.getX topLeft
+
+        width =
+            BoundingBox.width bounds
+
+        height =
+            BoundingBox.height bounds
+
+        attributes =
+            viewData.attributes
+                ++ [ style
+                        [ ( "position", "fixed" )
+                        , ( "top", px top )
+                        , ( "left", px left )
+                        , ( "width", px width )
+                        , ( "height", px height )
+                        , ( "z-index", "9999" )
+                        , ( "pointer-events", "none" )
+                        ]
+                   ]
+
+        children =
+            viewData.children
     in
-        ( "clone-" ++ item.id, Html.node item.tag (item.attributes ++ cloneAttributes) item.children )
+        ( id, Html.node config.itemTag attributes children )
+
+
+
+-- Decoders
+
+
+clientPosition : Json.Decoder Position
+clientPosition =
+    Json.map2 (,)
+        (Json.field "clientX" Json.float)
+        (Json.field "clientY" Json.float)
+        |> Json.map Vec2.fromTuple
+
+
+
+-- Helpers
 
 
 px : v -> String
@@ -273,50 +460,153 @@ px v =
     toString v ++ "px"
 
 
-
--- Events
-
-
-onMouseDown : (Mouse.Position -> Rectangle -> msg) -> Attribute msg
-onMouseDown tagger =
-    on "mousedown" (Decode.map2 tagger Mouse.position targetOffsetRect)
+itemClass : String -> String
+itemClass itemID =
+    "sortable-" ++ itemID
 
 
-onMouseMove : msg -> Html.Attribute msg
-onMouseMove tagger =
-    on "mousemove" (Decode.succeed tagger)
+classSelector : String -> String
+classSelector className =
+    "." ++ className
 
 
-targetOffsetRect : Decode.Decoder Rectangle
-targetOffsetRect =
-    DOM.target <| offsetRect
-
-
-offsetRect : Decode.Decoder Rectangle
-offsetRect =
-    Decode.map4 Rectangle
-        (Decode.map round DOM.offsetTop)
-        (Decode.map round DOM.offsetLeft)
-        (Decode.map round DOM.offsetWidth)
-        (Decode.map round DOM.offsetHeight)
-
-
-
--- utils
-
-
-{-| inserts a set of items into a list at a specified index
+{-| Finds and returns the first item in the list satisfying the predicate.
 -}
-insertAt : Int -> List a -> List a -> List a
-insertAt index items list =
-    let
-        pushIdx =
-            if index == -1 then
-                List.length list
-            else
-                index
+find : (a -> Bool) -> List a -> Maybe a
+find predicate list =
+    case list of
+        [] ->
+            Nothing
 
-        idx =
-            Basics.min (List.length list) (Basics.max pushIdx 0)
+        first :: rest ->
+            if predicate first then
+                Just first
+            else
+                find predicate rest
+
+
+{-| Finds and returns the first item, and the first items index, in the list
+satisfying the predicate.
+-}
+indexedFind : (a -> Bool) -> List a -> Maybe ( Int, a )
+indexedFind predicate list =
+    let
+        loop index list =
+            case list of
+                [] ->
+                    Nothing
+
+                first :: rest ->
+                    if predicate first then
+                        Just ( index, first )
+                    else
+                        loop (index + 1) rest
     in
-        List.append (List.take idx list) (List.append items (List.drop idx list))
+        loop 0 list
+
+
+{-| Returns true if p2 intersects with the half of the bounds which is opposite
+to the general direction of the movement from p1 to p2. For example, if the
+direction of p1-p2 is "Right", the function will check for the intersection of
+p2 and the right half of the bounds.
+-}
+detectSideIntersect : Position -> Position -> Rect -> Bool
+detectSideIntersect p1 p2 b =
+    let
+        contains bnds =
+            BoundingBox.contains p2 bnds
+    in
+        case getDirection p1 p2 of
+            Up ->
+                contains <| getRectHalf TopSide b
+
+            Down ->
+                contains <| getRectHalf BottomSide b
+
+            Left ->
+                contains <| getRectHalf LeftSide b
+
+            Right ->
+                contains <| getRectHalf RightSide b
+
+            NoDirection ->
+                False
+
+
+type Direction
+    = Up
+    | Down
+    | Left
+    | Right
+    | NoDirection
+
+
+{-| Returns the general direction of the movement from p1 to p2.
+-}
+getDirection : Position -> Position -> Direction
+getDirection p1 p2 =
+    let
+        delta =
+            Vec2.sub p2 p1
+
+        x =
+            Vec2.getX delta
+
+        y =
+            Vec2.getY delta
+    in
+        Debug.log "direction" <|
+            if x == 0 && y == 0 then
+                NoDirection
+            else if abs x > abs y then
+                if x > 0 then
+                    Right
+                else
+                    Left
+            else if y > 0 then
+                Down
+            else
+                Up
+
+
+type Side
+    = TopSide
+    | BottomSide
+    | LeftSide
+    | RightSide
+
+
+{-| Returns one half of the bounds provided.
+-}
+getRectHalf : Side -> Rect -> Rect
+getRectHalf side bounds =
+    let
+        center =
+            BoundingBox.center bounds
+
+        topLeft =
+            BoundingBox.bottomLeft bounds
+
+        bottomRight =
+            BoundingBox.topRight bounds
+    in
+        case side of
+            TopSide ->
+                BoundingBox.fromCorners
+                    (Vec2.fromTuple ( Vec2.getX topLeft, Vec2.getY topLeft ))
+                    (Vec2.fromTuple ( Vec2.getX bottomRight, Vec2.getY center ))
+
+            BottomSide ->
+                BoundingBox.fromCorners
+                    (Vec2.fromTuple ( Vec2.getX topLeft, Vec2.getY center ))
+                    (Vec2.fromTuple ( Vec2.getX bottomRight, Vec2.getY bottomRight ))
+
+            LeftSide ->
+                BoundingBox.fromCorners
+                    (Vec2.fromTuple ( Vec2.getX topLeft, Vec2.getY topLeft ))
+                    (Vec2.fromTuple ( Vec2.getX center, Vec2.getY bottomRight ))
+
+            RightSide ->
+                BoundingBox.fromCorners
+                    (Vec2.fromTuple ( Vec2.getX center, Vec2.getY topLeft ))
+                    (Vec2.fromTuple ( Vec2.getX bottomRight, Vec2.getY bottomRight ))
