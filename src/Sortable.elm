@@ -26,10 +26,16 @@ import Json.Decode as Json
 import BoundingBox
 import Math.Vector2 as Vec2
 import DOM
-import DOM.Window
 
 
 -- State
+
+
+{-| The state of sorting.
+-}
+type State
+    = Idle
+    | Dragging DraggingItem
 
 
 {-| DraggingItem represents the model of the current drag.
@@ -51,13 +57,6 @@ type alias DraggingItem =
     , prevPos : Position
     , currentPos : Position
     }
-
-
-{-| The state of sorting.
--}
-type State
-    = Idle
-    | Dragging DraggingItem
 
 
 type alias Rect =
@@ -95,42 +94,66 @@ type alias Sort =
 {-| Msg represents a sortable list message
 -}
 type Msg
-    = MouseDown (List String) (Maybe String) Position
-    | MouseMove String (List String) Position
-    | MouseUp
+    = PointerDown String Position
+    | PointerIntersect String String Int
+    | PointerMove Position
+    | PointerUp
 
 
-isOver : String -> Position -> Result DOM.Error Bool
-isOver selector clientPosition =
-    clientPosition
-        |> Vec2.add (Vec2.fromTuple ( DOM.Window.scrollLeft (), DOM.Window.scrollTop () ))
-        |> (\p -> DOM.Position (Vec2.getX p) (Vec2.getY p))
-        |> DOM.isOver selector
+{-| update returns a new state
+-}
+update : (Sort -> msg) -> msg -> Msg -> State -> ( State, Maybe msg )
+update toSort toEnd msg state =
+    case ( state, msg ) of
+        ( Idle, PointerDown itemID position ) ->
+            case getItemRectSync itemID of
+                Just bounds ->
+                    ( Dragging
+                        { id = itemID
+                        , bounds = BoundingBox.translate (Vec2.negate position) bounds
+                        , prevPos = position
+                        , currentPos = position
+                        , hasDragged = False
+                        }
+                    , Nothing
+                    )
 
+                Nothing ->
+                    ( state, Nothing )
 
-isOverItem : String -> Position -> Bool
-isOverItem itemID position =
-    let
-        itemSelector =
-            classSelector (itemClass itemID)
-    in
-        isOver itemSelector position
-            |> Result.toMaybe
-            |> Maybe.withDefault False
+        ( Dragging draggingItem, PointerIntersect listID itemID index ) ->
+            case getItemRectSync itemID of
+                Just bounds ->
+                    if detectSideIntersect draggingItem.prevPos draggingItem.currentPos bounds then
+                        ( Dragging draggingItem
+                        , Just <|
+                            toSort
+                                { listID = listID
+                                , itemID = draggingItem.id
+                                , index = index
+                                }
+                        )
+                    else
+                        ( Dragging draggingItem, Nothing )
 
+                Nothing ->
+                    ( Dragging draggingItem, Nothing )
 
-isOverItemHandle : String -> String -> Position -> Bool
-isOverItemHandle itemID handle position =
-    let
-        itemSelector =
-            classSelector (itemClass itemID)
+        ( Dragging draggingItem, PointerMove position ) ->
+            ( Dragging
+                { draggingItem
+                    | prevPos = draggingItem.currentPos
+                    , currentPos = position
+                    , hasDragged = draggingItem.hasDragged || draggingItem.currentPos /= position
+                }
+            , Nothing
+            )
 
-        handleSelector =
-            itemSelector ++ " " ++ classSelector handle
-    in
-        isOver handleSelector position
-            |> Result.toMaybe
-            |> Maybe.withDefault False
+        ( Dragging _, PointerUp ) ->
+            ( Idle, Just toEnd )
+
+        _ ->
+            ( state, Nothing )
 
 
 getItemRectSync : String -> Maybe Rect
@@ -146,92 +169,18 @@ getItemRectSync itemID =
             |> Result.toMaybe
 
 
-{-| update returns a new state
--}
-update : (Sort -> msg) -> msg -> Msg -> State -> ( State, Maybe msg )
-update toSort toEnd msg state =
-    case ( state, msg ) of
-        ( Idle, MouseDown itemIDS handle position ) ->
-            let
-                itemAtPosition itemID =
-                    case handle of
-                        Just h ->
-                            isOverItemHandle itemID h position
-
-                        Nothing ->
-                            isOverItem itemID position
-            in
-                case find itemAtPosition itemIDS of
-                    Just itemID ->
-                        case getItemRectSync itemID of
-                            Just bounds ->
-                                ( Dragging
-                                    { id = itemID
-                                    , bounds = BoundingBox.translate (Vec2.negate position) bounds
-                                    , prevPos = position
-                                    , currentPos = position
-                                    , hasDragged = False
-                                    }
-                                , Nothing
-                                )
-
-                            Nothing ->
-                                ( state, Nothing )
-
-                    Nothing ->
-                        ( state, Nothing )
-
-        ( Dragging draggingItem, MouseMove listID itemIDS position ) ->
-            let
-                draggingItem_ =
-                    { draggingItem
-                        | prevPos = draggingItem.currentPos
-                        , currentPos = position
-                        , hasDragged = draggingItem.hasDragged || draggingItem.currentPos /= position
-                    }
-
-                sort =
-                    case indexedFind (\itemID -> itemID /= draggingItem_.id && isOverItem itemID position) itemIDS of
-                        Just ( index, itemID ) ->
-                            case getItemRectSync itemID of
-                                Just bounds ->
-                                    if detectSideIntersect draggingItem_.prevPos draggingItem_.currentPos bounds then
-                                        Just <|
-                                            toSort
-                                                { listID = listID
-                                                , itemID = draggingItem_.id
-                                                , index = index
-                                                }
-                                    else
-                                        Nothing
-
-                                Nothing ->
-                                    Nothing
-
-                        Nothing ->
-                            Nothing
-            in
-                ( Dragging draggingItem_, sort )
-
-        ( Dragging _, MouseUp ) ->
-            ( Idle, Just toEnd )
-
-        _ ->
-            ( state, Nothing )
-
-
 {-| subscribes to various global events
 -}
 subscriptions : State -> Sub Msg
 subscriptions state =
     let
         positionToPosition pos =
-            MouseMove "" [] (Vec2.fromTuple ( pos.clientX, pos.clientY ))
+            PointerMove (Vec2.fromTuple ( pos.clientX, pos.clientY ))
     in
         case state of
             Dragging _ ->
                 Sub.batch
-                    [ Mouse.ups (\_ -> MouseUp)
+                    [ Mouse.ups (\_ -> PointerUp)
                     , Mouse.moves positionToPosition
                     ]
 
@@ -299,43 +248,26 @@ list (Config config) state items =
         itemIDS =
             List.map config.toID items
 
-        -- onMouseDown =
-        --     Html.Attributes.map config.toMsg <|
-        --         onWithOptions "mousedown"
-        --             { defaultOptions | preventDefault = True }
-        --             (Json.map (MouseDown itemIDS config.handle) clientPosition)
-        --
-        -- onMouseMove draggingItem =
-        --     Html.Attributes.map config.toMsg <|
-        --         onWithOptions "mousemove"
-        --             { defaultOptions | preventDefault = True }
-        --             (Json.map (MouseMove config.id itemIDS) clientPosition)
         attributes =
             config.attributes
 
-        -- ++ case state of
-        --     Dragging draggingItem ->
-        --         [ onMouseMove draggingItem ]
-        --
-        --     Idle ->
-        --         [ onMouseDown ]
         itemChildren =
             case state of
                 Dragging draggingItem ->
                     if draggingItem.hasDragged then
-                        List.map
-                            (\item ->
+                        List.indexedMap
+                            (\idx item ->
                                 if config.toID item == draggingItem.id then
                                     draggingItemView (Config config) item
                                 else
-                                    itemView (Config config) item
+                                    siblingItemView (Config config) state idx item
                             )
                             items
                     else
-                        List.map (itemView (Config config)) items
+                        List.map (idleItemView (Config config)) items
 
                 Idle ->
-                    List.map (itemView (Config config)) items
+                    List.map (idleItemView (Config config)) items
 
         cloneChildren =
             case state of
@@ -356,6 +288,53 @@ list (Config config) state items =
         Html.Keyed.node config.tag attributes children
 
 
+idleItemView : Config item msg -> item -> ( String, Html msg )
+idleItemView (Config config) item =
+    let
+        id =
+            config.toID item
+
+        viewData =
+            (config.item item)
+
+        onItemMouseDown tagger =
+            onWithOptions "mousedown"
+                { defaultOptions | preventDefault = True }
+                (Json.map tagger clientXY)
+
+        onHandleMouseDown handle tagger =
+            onWithOptions "mousedown"
+                { defaultOptions | preventDefault = True }
+                (target className
+                    |> Json.andThen
+                        (\classes ->
+                            if classNamesMember handle classes then
+                                Json.map tagger clientXY
+                            else
+                                Json.fail ("no mousedown on handle '." ++ handle ++ "'")
+                        )
+                )
+
+        onMouseDown handle tagger =
+            case handle of
+                Just handle_ ->
+                    onHandleMouseDown handle_ tagger
+
+                Nothing ->
+                    onItemMouseDown tagger
+
+        attributes =
+            viewData.attributes
+                ++ [ class (itemClass id)
+                   , Html.Attributes.map config.toMsg <| onMouseDown config.handle (PointerDown id)
+                   ]
+
+        children =
+            viewData.children
+    in
+        ( id, Html.node config.itemTag attributes children )
+
+
 draggingItemView : Config item msg -> item -> ( String, Html msg )
 draggingItemView (Config config) item =
     let
@@ -374,8 +353,8 @@ draggingItemView (Config config) item =
         ( id, Html.node config.itemTag attributes children )
 
 
-itemView : Config item msg -> item -> ( String, Html msg )
-itemView (Config config) item =
+siblingItemView : Config item msg -> State -> Int -> item -> ( String, Html msg )
+siblingItemView (Config config) state idx item =
     let
         id =
             config.toID item
@@ -384,7 +363,11 @@ itemView (Config config) item =
             (config.item item)
 
         attributes =
-            viewData.attributes ++ [ class (itemClass id) ]
+            viewData.attributes
+                ++ [ class (itemClass id)
+                   , on "mousemove" (Json.succeed (PointerIntersect config.id id idx))
+                        |> Html.Attributes.map config.toMsg
+                   ]
 
         children =
             viewData.children
@@ -442,16 +425,31 @@ cloneView (Config config) draggingItem item =
 -- Decoders
 
 
-clientPosition : Json.Decoder Position
-clientPosition =
+clientXY : Json.Decoder Position
+clientXY =
     Json.map2 (,)
         (Json.field "clientX" Json.float)
         (Json.field "clientY" Json.float)
         |> Json.map Vec2.fromTuple
 
 
+currentTarget : Json.Decoder msg -> Json.Decoder msg
+currentTarget =
+    Json.field "currentTarget"
 
--- Helpers
+
+target : Json.Decoder msg -> Json.Decoder msg
+target =
+    Json.field "target"
+
+
+className : Json.Decoder String
+className =
+    Json.field "className" Json.string
+
+
+
+-- CSS Helpers
 
 
 px : v -> String
@@ -469,39 +467,14 @@ classSelector className =
     "." ++ className
 
 
-{-| Finds and returns the first item in the list satisfying the predicate.
--}
-find : (a -> Bool) -> List a -> Maybe a
-find predicate list =
-    case list of
-        [] ->
-            Nothing
-
-        first :: rest ->
-            if predicate first then
-                Just first
-            else
-                find predicate rest
+classNamesMember : String -> String -> Bool
+classNamesMember class classes =
+    String.split " " classes
+        |> List.member class
 
 
-{-| Finds and returns the first item, and the first items index, in the list
-satisfying the predicate.
--}
-indexedFind : (a -> Bool) -> List a -> Maybe ( Int, a )
-indexedFind predicate list =
-    let
-        loop index list =
-            case list of
-                [] ->
-                    Nothing
 
-                first :: rest ->
-                    if predicate first then
-                        Just ( index, first )
-                    else
-                        loop (index + 1) rest
-    in
-        loop 0 list
+-- Geometry Helpers
 
 
 {-| Returns true if p2 intersects with the half of the bounds which is opposite
@@ -554,18 +527,17 @@ getDirection p1 p2 =
         y =
             Vec2.getY delta
     in
-        Debug.log "direction" <|
-            if x == 0 && y == 0 then
-                NoDirection
-            else if abs x > abs y then
-                if x > 0 then
-                    Right
-                else
-                    Left
-            else if y > 0 then
-                Down
+        if x == 0 && y == 0 then
+            NoDirection
+        else if abs x > abs y then
+            if x > 0 then
+                Right
             else
-                Up
+                Left
+        else if y > 0 then
+            Down
+        else
+            Up
 
 
 type Side
