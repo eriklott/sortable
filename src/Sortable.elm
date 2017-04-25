@@ -218,16 +218,17 @@ type Config item msg
 {-| config returns a Config type.
 -}
 config :
-    String
-    -> String
-    -> List (Attribute msg)
-    -> String
-    -> (item -> ViewDetails msg)
-    -> Maybe String
-    -> (Msg -> msg)
-    -> (item -> String)
+    { id : String
+    , tag : String
+    , attributes : List (Attribute msg)
+    , itemTag : String
+    , item : item -> ViewDetails msg
+    , handle : Maybe String
+    , toMsg : Msg -> msg
+    , toID : item -> String
+    }
     -> Config item msg
-config id tag attributes itemTag item handle toMsg toID =
+config { id, tag, attributes, itemTag, item, handle, toMsg, toID } =
     Config
         { id = id
         , tag = tag
