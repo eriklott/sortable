@@ -51,6 +51,7 @@ init =
 type Msg
     = SortableMsg Sortable.Msg
     | Sort Sortable.Sort
+    | NoOp
 
 
 update : Msg -> Model -> Model
@@ -59,7 +60,7 @@ update msg model =
         SortableMsg msg_ ->
             let
                 ( sortable, outMsg ) =
-                    Sortable.update Sort msg_ model.sortable
+                    Sortable.update Sort NoOp msg_ model.sortable
 
                 model_ =
                     { model | sortable = sortable }
@@ -83,6 +84,9 @@ update msg model =
                     List.take sort.index filteredItems ++ item ++ List.drop sort.index filteredItems
             in
                 { model | items = sortedItems }
+
+        NoOp ->
+            model
 
 
 subscriptions : Model -> Sub Msg

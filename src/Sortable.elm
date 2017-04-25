@@ -299,27 +299,26 @@ list (Config config) state items =
         itemIDS =
             List.map config.toID items
 
-        onMouseDown =
-            Html.Attributes.map config.toMsg <|
-                onWithOptions "mousedown"
-                    { defaultOptions | preventDefault = True }
-                    (Json.map (MouseDown itemIDS config.handle) clientPosition)
-
-        onMouseMove draggingItem =
-            Html.Attributes.map config.toMsg <|
-                onWithOptions "mousemove"
-                    { defaultOptions | preventDefault = True }
-                    (Json.map (MouseMove config.id itemIDS) clientPosition)
-
+        -- onMouseDown =
+        --     Html.Attributes.map config.toMsg <|
+        --         onWithOptions "mousedown"
+        --             { defaultOptions | preventDefault = True }
+        --             (Json.map (MouseDown itemIDS config.handle) clientPosition)
+        --
+        -- onMouseMove draggingItem =
+        --     Html.Attributes.map config.toMsg <|
+        --         onWithOptions "mousemove"
+        --             { defaultOptions | preventDefault = True }
+        --             (Json.map (MouseMove config.id itemIDS) clientPosition)
         attributes =
             config.attributes
-                ++ case state of
-                    Dragging draggingItem ->
-                        [ onMouseMove draggingItem ]
 
-                    Idle ->
-                        [ onMouseDown ]
-
+        -- ++ case state of
+        --     Dragging draggingItem ->
+        --         [ onMouseMove draggingItem ]
+        --
+        --     Idle ->
+        --         [ onMouseDown ]
         itemChildren =
             case state of
                 Dragging draggingItem ->

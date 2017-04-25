@@ -12,14 +12,15 @@ type alias Item =
 
 
 type alias Model =
-    { items : List Item
+    { items1 : List Item
+    , items2 : List Item
     , sortable : Sortable.State
     }
 
 
 init : ( Model, Cmd Msg )
 init =
-    ( { items =
+    ( { items1 =
             [ Item "1" "Apple"
             , Item "2" "Orange"
             , Item "3" "Grape"
@@ -30,7 +31,9 @@ init =
             , Item "8" "Grape"
             , Item "9" "Banana"
             , Item "10" "Melon"
-            , Item "11" "Strawberry"
+            ]
+      , items2 =
+            [ Item "11" "Strawberry"
             , Item "12" "Orange"
             , Item "13" "Grape"
             , Item "14" "Banana"
@@ -51,6 +54,7 @@ init =
 type Msg
     = SortableMsg Sortable.Msg
     | Sort Sortable.Sort
+    | NoOp
 
 
 update : Msg -> Model -> Model
@@ -59,7 +63,7 @@ update msg model =
         SortableMsg msg_ ->
             let
                 ( sortable, outMsg ) =
-                    Sortable.update Sort msg_ model.sortable
+                    Sortable.update Sort NoOp msg_ model.sortable
 
                 model_ =
                     { model | sortable = sortable }
@@ -74,15 +78,18 @@ update msg model =
         Sort sort ->
             let
                 item =
-                    List.filter (\itm -> itm.id == sort.itemID) model.items
+                    List.filter (\itm -> itm.id == sort.itemID) model.items1
 
                 filteredItems =
-                    List.filter (\itm -> itm.id /= sort.itemID) model.items
+                    List.filter (\itm -> itm.id /= sort.itemID) model.items1
 
                 sortedItems =
                     List.take sort.index filteredItems ++ item ++ List.drop sort.index filteredItems
             in
-                { model | items = sortedItems }
+                { model | items1 = sortedItems }
+
+        NoOp ->
+            model
 
 
 subscriptions : Model -> Sub Msg
@@ -92,7 +99,10 @@ subscriptions model =
 
 view : Model -> Html Msg
 view model =
-    Sortable.list (Sortable.config "list1" "ul" [] "li" itemView Nothing SortableMsg .id) model.sortable model.items
+    div []
+        [ Sortable.list (Sortable.config "list1" "ul" [] "li" itemView Nothing SortableMsg .id) model.sortable model.items1
+        , Sortable.list (Sortable.config "list2" "ul" [] "li" itemView Nothing SortableMsg .id) model.sortable model.items2
+        ]
 
 
 itemView : Item -> Sortable.ViewDetails Msg
