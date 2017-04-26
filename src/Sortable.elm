@@ -1,4 +1,4 @@
-module Sortable exposing (State, Msg, ViewDetails, Config, Sort, init, update, subscriptions, config, list)
+module Sortable exposing (State, Msg, ViewDetails, Config, Sort, init, update, subscriptions, config, view)
 
 {-| Sortable module provides the tools to easily create a sortable list.
 
@@ -9,7 +9,7 @@ module Sortable exposing (State, Msg, ViewDetails, Config, Sort, init, update, s
 @docs Config, config, ViewDetails
 
 # View
-@docs list
+@docs view
 
 # Events
 @docs Sort
@@ -95,8 +95,9 @@ type alias Sort =
 -}
 type Msg
     = PointerDown String Position
-    | PointerIntersect String String Int
     | PointerMove Position
+    | PointerItemIntersect String String Int
+    | PointerEmptyListIntersect String
     | PointerUp
 
 
@@ -121,7 +122,17 @@ update toSort toEnd msg state =
                 Nothing ->
                     ( state, Nothing )
 
-        ( Dragging draggingItem, PointerIntersect listID itemID index ) ->
+        ( Dragging draggingItem, PointerMove position ) ->
+            ( Dragging
+                { draggingItem
+                    | prevPos = draggingItem.currentPos
+                    , currentPos = position
+                    , hasDragged = draggingItem.hasDragged || draggingItem.currentPos /= position
+                }
+            , Nothing
+            )
+
+        ( Dragging draggingItem, PointerItemIntersect listID itemID index ) ->
             case getItemRectSync itemID of
                 Just bounds ->
                     if detectSideIntersect draggingItem.prevPos draggingItem.currentPos bounds then
@@ -139,14 +150,14 @@ update toSort toEnd msg state =
                 Nothing ->
                     ( Dragging draggingItem, Nothing )
 
-        ( Dragging draggingItem, PointerMove position ) ->
-            ( Dragging
-                { draggingItem
-                    | prevPos = draggingItem.currentPos
-                    , currentPos = position
-                    , hasDragged = draggingItem.hasDragged || draggingItem.currentPos /= position
-                }
-            , Nothing
+        ( Dragging draggingItem, PointerEmptyListIntersect listID ) ->
+            ( Dragging draggingItem
+            , Just <|
+                toSort
+                    { listID = listID
+                    , itemID = draggingItem.id
+                    , index = 0
+                    }
             )
 
         ( Dragging _, PointerUp ) ->
@@ -243,8 +254,31 @@ config { id, tag, attributes, itemTag, item, handle, toMsg, toID } =
 
 {-| renders a list of sortable items.
 -}
-list : Config item msg -> State -> List item -> Html msg
-list (Config config) state items =
+view : Config item msg -> State -> List item -> Html msg
+view (Config config) state items =
+    if List.isEmpty items then
+        emptyListView (Config config) state
+    else
+        listView (Config config) state items
+
+
+emptyListView : Config item msg -> State -> Html msg
+emptyListView (Config config) state =
+    let
+        attributes =
+            config.attributes
+                ++ case state of
+                    Dragging draggingItem ->
+                        [ on "mouseover" <| Json.succeed <| config.toMsg <| PointerEmptyListIntersect config.id ]
+
+                    Idle ->
+                        []
+    in
+        Html.Keyed.node config.tag config.attributes []
+
+
+listView : Config item msg -> State -> List item -> Html msg
+listView (Config config) state items =
     let
         itemIDS =
             List.map config.toID items
@@ -366,7 +400,7 @@ siblingItemView (Config config) state idx item =
         attributes =
             viewData.attributes
                 ++ [ class (itemClass id)
-                   , on "mousemove" (Json.succeed (PointerIntersect config.id id idx))
+                   , on "mousemove" (Json.succeed (PointerItemIntersect config.id id idx))
                         |> Html.Attributes.map config.toMsg
                    ]
 
