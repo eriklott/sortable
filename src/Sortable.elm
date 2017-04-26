@@ -274,7 +274,7 @@ emptyListView (Config config) state =
                     Idle ->
                         []
     in
-        Html.Keyed.node config.tag config.attributes []
+        Html.Keyed.node config.tag attributes []
 
 
 listView : Config item msg -> State -> List item -> Html msg
