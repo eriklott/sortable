@@ -14,7 +14,7 @@ type alias Item =
 type alias Model =
     { items1 : List Item
     , items2 : List Item
-    , sortable : Sortable.State
+    , sortable : Sortable.Model
     }
 
 
@@ -53,43 +53,13 @@ init =
 
 type Msg
     = SortableMsg Sortable.Msg
-    | Sort Sortable.Sort
-    | NoOp
 
 
 update : Msg -> Model -> Model
 update msg model =
     case msg of
         SortableMsg msg_ ->
-            let
-                ( sortable, outMsg ) =
-                    Sortable.update Sort NoOp msg_ model.sortable
-
-                model_ =
-                    { model | sortable = sortable }
-            in
-                case outMsg of
-                    Just outMsg_ ->
-                        update outMsg_ model_
-
-                    Nothing ->
-                        model_
-
-        Sort sort ->
-            let
-                item =
-                    List.filter (\itm -> itm.id == sort.itemID) model.items1
-
-                filteredItems =
-                    List.filter (\itm -> itm.id /= sort.itemID) model.items1
-
-                sortedItems =
-                    List.take sort.index filteredItems ++ item ++ List.drop sort.index filteredItems
-            in
-                { model | items1 = sortedItems }
-
-        NoOp ->
-            model
+            { model | sortable = Sortable.update msg_ model.sortable }
 
 
 subscriptions : Model -> Sub Msg
@@ -99,10 +69,38 @@ subscriptions model =
 
 view : Model -> Html Msg
 view model =
-    div []
-        [ Sortable.list (Sortable.config "list1" "ul" [] "li" itemView Nothing SortableMsg .id) model.sortable model.items1
-        , Sortable.list (Sortable.config "list2" "ul" [] "li" itemView Nothing SortableMsg .id) model.sortable model.items2
-        ]
+    let
+        sortableConfig =
+            Sortable.group
+                { toMsg = SortableMsg
+                , toID = .id
+                , lists =
+                    [ Sortable.groupList
+                        { id = "list1"
+                        , tag = "ul"
+                        , attributes = []
+                        , itemTag = "li"
+                        , itemDetails = itemView
+                        , handle = Nothing
+                        , items = model.items1
+                        }
+                    , Sortable.groupList
+                        { id = "list2"
+                        , tag = "ul"
+                        , attributes = []
+                        , itemTag = "li"
+                        , itemDetails = itemView
+                        , handle = Nothing
+                        , items = model.items2
+                        }
+                    ]
+                }
+                model.sortable
+    in
+        div []
+            [ Sortable.view sortableConfig "list1"
+            , Sortable.view sortableConfig "list2"
+            ]
 
 
 itemView : Item -> Sortable.ViewDetails Msg
