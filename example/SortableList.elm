@@ -75,33 +75,36 @@ view model =
                 { toMsg = SortableMsg
                 , toID = .id
                 , lists =
-                    [ Sortable.groupList
-                        { id = "list1"
-                        , tag = "ul"
-                        , attributes = []
-                        , itemTag = "li"
-                        , itemDetails = itemView
-                        , handle = Nothing
-                        , items = model.items1
-                        }
-                    , Sortable.groupList
-                        { id = "list2"
-                        , tag = "ol"
-                        , attributes = []
-                        , itemTag = "li"
-                        , itemDetails = itemView
-                        , handle = Nothing
-                        , items = model.items2
-                        }
-                    , Sortable.groupList
-                        { id = "list3"
-                        , tag = "ul"
-                        , attributes = [ style [ ( "border", "1px solid black" ), ( "width", "400px" ), ( "min-height", "400px" ) ] ]
-                        , itemTag = "li"
-                        , itemDetails = itemView
-                        , handle = Nothing
-                        , items = []
-                        }
+                    [ { id = "list1"
+                      , tag = "ul"
+                      , attributes = []
+                      , canReceiveItem = always True
+                      , canRemoveItem = always True
+                      , itemTag = "li"
+                      , itemDetails = itemView
+                      , itemHandle = Nothing
+                      , items = model.items1
+                      }
+                    , { id = "list2"
+                      , tag = "ol"
+                      , attributes = []
+                      , canReceiveItem = always True
+                      , canRemoveItem = always True
+                      , itemTag = "li"
+                      , itemDetails = itemView
+                      , itemHandle = Nothing
+                      , items = model.items2
+                      }
+                    , { id = "list3"
+                      , tag = "ul"
+                      , attributes = [ style [ ( "border", "1px solid black" ), ( "width", "400px" ), ( "min-height", "400px" ) ] ]
+                      , canReceiveItem = always True
+                      , canRemoveItem = always False
+                      , itemTag = "li"
+                      , itemDetails = itemView
+                      , itemHandle = Nothing
+                      , items = []
+                      }
                     ]
                 }
                 model.sortable

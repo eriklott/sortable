@@ -71,15 +71,16 @@ view model =
             { toMsg = SortableMsg
             , toID = .id
             , lists =
-                [ Sortable.groupList
-                    { id = "list1"
-                    , tag = "ul"
-                    , attributes = []
-                    , itemTag = "li"
-                    , itemDetails = itemView
-                    , handle = Just "handle"
-                    , items = model.items
-                    }
+                [ { id = "list1"
+                  , tag = "ul"
+                  , attributes = []
+                  , canReceiveItem = always True
+                  , canRemoveItem = always True
+                  , itemTag = "li"
+                  , itemDetails = itemView
+                  , itemHandle = Just "handle"
+                  , items = model.items
+                  }
                 ]
             }
             model.sortable
