@@ -21,6 +21,8 @@ import Dict exposing (Dict)
 import Set
 import BoundingBox
 import Math.Vector2 as Vec2
+import DOM
+import Mouse
 
 
 -- Model
@@ -30,9 +32,13 @@ import Math.Vector2 as Vec2
 -}
 type Model
     = Model
-        { items : Dict String ( String, Int )
+        { sortState : SortState
         , draggingItem : Maybe DraggingItem
         }
+
+
+type alias SortState =
+    Dict String ( String, Int )
 
 
 {-| DraggingItem contains state relating to the item currently being dragged
@@ -42,7 +48,8 @@ type alias DraggingItem =
     , bounds : Rect
     , fromListID : String
     , hasDragged : Bool
-    , position : Point
+    , currentPos : Point
+    , prevPos : Point
     }
 
 
@@ -51,9 +58,52 @@ type alias DraggingItem =
 init : Model
 init =
     Model
-        { items = Dict.empty
+        { sortState = Dict.empty
         , draggingItem = Nothing
         }
+
+
+moveItem : String -> String -> Int -> Model -> Model
+moveItem itemID nextListID nextIndex (Model model) =
+    let
+        decrementCurrentSiblingPositions ( currentListID, currentIndex ) =
+            Model
+                { model
+                    | sortState =
+                        Dict.map
+                            (\k ( listID, index ) ->
+                                if listID == currentListID && index > currentIndex then
+                                    ( listID, index - 1 )
+                                else
+                                    ( listID, index )
+                            )
+                            model.sortState
+                }
+
+        incrementNextSiblingPositions (Model model) =
+            Model
+                { model
+                    | sortState =
+                        Dict.map
+                            (\k ( listID, index ) ->
+                                if listID == nextListID && index >= nextIndex then
+                                    ( listID, index + 1 )
+                                else
+                                    ( listID, index )
+                            )
+                            model.sortState
+                }
+
+        insertItem (Model model) =
+            Model { model | sortState = Dict.insert itemID ( nextListID, nextIndex ) model.sortState }
+    in
+        Dict.get itemID model.sortState
+            |> Maybe.map
+                (decrementCurrentSiblingPositions
+                    >> incrementNextSiblingPositions
+                    >> insertItem
+                )
+            |> Maybe.withDefault (Model model)
 
 
 
@@ -118,18 +168,17 @@ getDirection p1 p2 =
         y =
             Vec2.getY delta
     in
-        Debug.log "direction" <|
-            if x == 0 && y == 0 then
-                NoDirection
-            else if abs x > abs y then
-                if x > 0 then
-                    Right
-                else
-                    Left
-            else if y > 0 then
-                Down
+        if x == 0 && y == 0 then
+            NoDirection
+        else if abs x > abs y then
+            if x > 0 then
+                Right
             else
-                Up
+                Left
+        else if y > 0 then
+            Down
+        else
+            Up
 
 
 type Side
@@ -175,6 +224,19 @@ getRectHalf side bounds =
                     (Vec2.fromTuple ( Vec2.getX bottomRight, Vec2.getY bottomRight ))
 
 
+getItemRectSync : String -> Maybe Rect
+getItemRectSync itemID =
+    let
+        dimensionsToRect dimensions =
+            BoundingBox.fromCorners
+                (Vec2.fromTuple ( dimensions.left, dimensions.top ))
+                (Vec2.fromTuple ( dimensions.right, dimensions.bottom ))
+    in
+        DOM.getDimensionsSync (classSelector <| itemClass itemID)
+            |> Result.map dimensionsToRect
+            |> Result.toMaybe
+
+
 
 -- Update
 
@@ -182,15 +244,81 @@ getRectHalf side bounds =
 {-| Sortable list message
 -}
 type Msg
-    = PointerDown
-    | PointerEmptyListIntersect String
+    = PointerDown SortState String String Point
+    | PointerMove Point
+    | PointerOverEmptyList String
+    | PointerOverTargetItem String String Int
+    | PointerUp
 
 
 {-| updates the sortable list model
 -}
 update : Msg -> Model -> Model
-update msg model =
-    model
+update msg (Model model) =
+    case Debug.log "msg" msg of
+        PointerDown sortState listID itemID position ->
+            case getItemRectSync itemID of
+                Just bounds ->
+                    Model
+                        { model
+                            | sortState = sortState
+                            , draggingItem =
+                                Just
+                                    { id = itemID
+                                    , bounds = BoundingBox.translate (Vec2.negate position) bounds
+                                    , fromListID = listID
+                                    , hasDragged = False
+                                    , currentPos = position
+                                    , prevPos = position
+                                    }
+                        }
+
+                Nothing ->
+                    Model model
+
+        PointerMove position ->
+            case model.draggingItem of
+                Just draggingItem ->
+                    Model
+                        { model
+                            | draggingItem =
+                                Just
+                                    { draggingItem
+                                        | currentPos = position
+                                        , prevPos = draggingItem.currentPos
+                                        , hasDragged = draggingItem.hasDragged || draggingItem.currentPos /= position
+                                    }
+                        }
+
+                Nothing ->
+                    Model model
+
+        PointerOverEmptyList listID ->
+            case model.draggingItem of
+                Just draggingItem ->
+                    moveItem draggingItem.id listID 0 (Model model)
+
+                Nothing ->
+                    Model model
+
+        PointerOverTargetItem targetListID targetItemID targetIndex ->
+            case model.draggingItem of
+                Just draggingItem ->
+                    case getItemRectSync targetItemID of
+                        Just targetBounds ->
+                            if detectSideIntersect draggingItem.prevPos draggingItem.currentPos targetBounds then
+                                moveItem draggingItem.id targetListID targetIndex (Model model)
+                            else
+                                (Model model)
+
+                        Nothing ->
+                            (Model model)
+
+                Nothing ->
+                    Model model
+
+        PointerUp ->
+            Model { model | draggingItem = Nothing }
 
 
 
@@ -200,8 +328,16 @@ update msg model =
 {-| subscribes to various global events
 -}
 subscriptions : Model -> Sub Msg
-subscriptions model =
-    Sub.none
+subscriptions (Model model) =
+    case model.draggingItem of
+        Just _ ->
+            Sub.batch
+                [ Mouse.moves (\p -> PointerMove p.clientXY)
+                , Mouse.ups (\_ -> PointerUp)
+                ]
+
+        Nothing ->
+            Sub.none
 
 
 
@@ -224,6 +360,7 @@ type GroupConfig item msg
         , toID : item -> String
         , lists : List (GroupListConfig item msg)
         , model : Model
+        , sortState : SortState
         }
 
 
@@ -266,8 +403,8 @@ groupConfigToListConfig (GroupConfig groupConfig) (GroupListConfig groupListConf
     }
 
 
-sortGroupConfig : GroupConfig item msg -> GroupConfig item msg
-sortGroupConfig (GroupConfig config) =
+applySortStateToGroupConfig : GroupConfig item msg -> GroupConfig item msg
+applySortStateToGroupConfig (GroupConfig config) =
     let
         (Model model) =
             config.model
@@ -281,36 +418,36 @@ sortGroupConfig (GroupConfig config) =
         sortedLists =
             config.lists
                 |> List.foldr
-                    (\(GroupListConfig list) ( intersection, rest, index ) ->
+                    (\(GroupListConfig list) ( intersection, rest ) ->
                         list.items
                             |> List.foldr
-                                (\item ( intersection, rest, index ) ->
+                                (\item ( intersection, rest ) ->
                                     let
                                         getCachedItem =
-                                            Dict.get (config.toID item) model.items
+                                            Dict.get (config.toID item) model.sortState
 
-                                        checkListIDExists ( cachedListID, cachedPosition ) =
-                                            if Set.member cachedListID listIDS then
-                                                Just ( cachedListID, cachedPosition )
+                                        checkListIDExists ( listID, position ) =
+                                            if Set.member listID listIDS then
+                                                Just ( listID, position )
                                             else
                                                 Nothing
 
-                                        addItemToIntersection ( cachedListID, cachedPosition ) =
-                                            Just ( { item = item, listID = cachedListID, position = cachedPosition } :: intersection, rest, index )
+                                        addItemToIntersection ( listID, position ) =
+                                            Just ( { item = item, listID = listID, position = position } :: intersection, rest )
 
                                         addItemToRest =
-                                            ( intersection, { item = item, listID = list.id, position = index } :: rest, index - 1 )
+                                            ( intersection, { item = item, listID = list.id, position = 0 } :: rest )
                                     in
                                         getCachedItem
                                             |> Maybe.andThen checkListIDExists
                                             |> Maybe.andThen addItemToIntersection
                                             |> Maybe.withDefault addItemToRest
                                 )
-                                ( intersection, rest, index )
+                                ( intersection, rest )
                     )
-                    ( [], [], 0 )
-                |> (\( intersection, rest, idx ) ->
-                        (List.sortBy .position intersection) ++ intersection
+                    ( [], [] )
+                |> (\( intersection, rest ) ->
+                        (List.sortBy .position intersection) ++ rest
                    )
                 |> List.foldr
                     (\{ item, listID, position } dict ->
@@ -325,10 +462,27 @@ sortGroupConfig (GroupConfig config) =
             config.lists
                 |> List.map
                     (\(GroupListConfig list) ->
-                        GroupListConfig { list | items = (Dict.get list.id sortedLists) |> Maybe.withDefault list.items }
+                        GroupListConfig { list | items = (Dict.get list.id sortedLists) |> Maybe.withDefault [] }
                     )
     in
         GroupConfig { config | lists = updatedLists }
+
+
+groupConfigToSortState : GroupConfig item msg -> SortState
+groupConfigToSortState (GroupConfig config) =
+    (config.lists
+        |> List.foldl
+            (\(GroupListConfig groupListConfig) sortState ->
+                groupListConfig.items
+                    |> List.foldl
+                        (\item ( sortState, index ) ->
+                            ( Dict.insert (config.toID item) ( groupListConfig.id, index ) sortState, index + 1 )
+                        )
+                        ( sortState, 0 )
+                    |> Tuple.first
+            )
+            (Dict.empty)
+    )
 
 
 {-| -}
@@ -339,14 +493,21 @@ group :
     }
     -> Model
     -> GroupConfig item msg
-group { toMsg, toID, lists } (Model model) =
-    sortGroupConfig <|
-        GroupConfig
-            { toMsg = toMsg
-            , toID = toID
-            , lists = lists
-            , model = Model model
-            }
+group { toMsg, toID, lists } model =
+    let
+        (GroupConfig groupConfig) =
+            GroupConfig
+                { toMsg = toMsg
+                , toID = toID
+                , lists = lists
+                , model = model
+                , sortState = Dict.empty
+                }
+
+        (GroupConfig groupConfig_) =
+            applySortStateToGroupConfig (GroupConfig groupConfig)
+    in
+        GroupConfig { groupConfig_ | sortState = groupConfigToSortState (GroupConfig groupConfig_) }
 
 
 {-| -}
@@ -382,6 +543,7 @@ view (GroupConfig groupConfig) listID =
                     (GroupListConfig groupListConfig)
                 )
                 groupConfig.model
+                groupConfig.sortState
                 groupListConfig.items
 
         renderNothing =
@@ -397,8 +559,8 @@ view (GroupConfig groupConfig) listID =
 -- List Views
 
 
-listView : ListConfig item msg -> Model -> List item -> Html msg
-listView config (Model model) items =
+listView : ListConfig item msg -> Model -> SortState -> List item -> Html msg
+listView config (Model model) sortState items =
     case model.draggingItem of
         Just draggingItem ->
             if draggingItem.hasDragged then
@@ -407,10 +569,10 @@ listView config (Model model) items =
                 else
                     activeListView config (Model model) items draggingItem
             else
-                idleListView config items
+                idleListView config sortState items
 
         Nothing ->
-            idleListView config items
+            idleListView config sortState items
 
 
 emptyListView : ListConfig item msg -> Model -> Html msg
@@ -419,7 +581,7 @@ emptyListView config (Model model) =
         localAttributes =
             case model.draggingItem of
                 Just _ ->
-                    [ on "mouseover" <| Json.succeed <| config.toMsg <| PointerEmptyListIntersect config.id ]
+                    [ on "mouseover" <| Json.succeed <| config.toMsg <| PointerOverEmptyList config.id ]
 
                 Nothing ->
                     []
@@ -430,11 +592,11 @@ emptyListView config (Model model) =
         Html.Keyed.node config.tag attributes []
 
 
-idleListView : ListConfig item msg -> List item -> Html msg
-idleListView config items =
+idleListView : ListConfig item msg -> SortState -> List item -> Html msg
+idleListView config cachedItems items =
     let
         children =
-            List.map (idleItemView config) items
+            List.map (idleItemView config cachedItems) items
     in
         Html.Keyed.node config.tag config.attributes children
 
@@ -464,8 +626,8 @@ activeListView config (Model model) items draggingItem =
 -- Item Views
 
 
-idleItemView : ListConfig item msg -> item -> ( String, Html msg )
-idleItemView config item =
+idleItemView : ListConfig item msg -> SortState -> item -> ( String, Html msg )
+idleItemView config cachedItems item =
     let
         id =
             config.toID item
@@ -478,32 +640,31 @@ idleItemView config item =
                 { defaultOptions | preventDefault = True }
                 (Json.map tagger clientXY)
 
-        -- onHandleMouseDown handle tagger =
-        --     onWithOptions "mousedown"
-        --         { defaultOptions | preventDefault = True }
-        --         (target className
-        --             |> Json.andThen
-        --                 (\classes ->
-        --                     if classNamesMember handle classes then
-        --                         Json.map tagger clientXY
-        --                     else
-        --                         Json.fail ("no mousedown on handle '." ++ handle ++ "'")
-        --                 )
-        --         )
-        -- onMouseDown handle tagger =
-        --     case handle of
-        --         Just handle_ ->
-        --             onHandleMouseDown handle_ tagger
-        --
-        --         Nothing ->
-        --             onItemMouseDown tagger
-        -- attributes =
-        --     viewData.attributes
-        --         ++ [ class (itemClass id)
-        --            , Html.Attributes.map config.toMsg <| onMouseDown config.handle (PointerDown id)
-        --            ]
+        onHandleMouseDown handle tagger =
+            onWithOptions "mousedown"
+                { defaultOptions | preventDefault = True }
+                (target className
+                    |> Json.andThen
+                        (\classes ->
+                            if classNamesMember handle classes then
+                                Json.map tagger clientXY
+                            else
+                                Json.fail ("no mousedown on handle '." ++ handle ++ "'")
+                        )
+                )
+
+        onMouseDown tagger =
+            case config.itemHandle of
+                Just handle ->
+                    onHandleMouseDown handle tagger
+
+                Nothing ->
+                    onItemMouseDown tagger
+
         localAttributes =
-            [ class (itemClass id) ]
+            [ class (itemClass id)
+            , Html.Attributes.map config.toMsg <| onMouseDown <| PointerDown cachedItems config.id id
+            ]
 
         attributes =
             itemDetails.attributes ++ localAttributes
@@ -547,12 +708,11 @@ targetItemView config index item =
             config.itemDetails item
 
         localAttributes =
-            [ class (itemClass id) ]
+            [ class (itemClass id)
+            , on "mousemove" (Json.succeed (PointerOverTargetItem config.id id index))
+                |> Html.Attributes.map config.toMsg
+            ]
 
-        -- ++ [ class (itemClass id)
-        --    , on "mousemove" (Json.succeed (PointerItemIntersect config.id id idx))
-        --         |> Html.Attributes.map config.toMsg
-        --    ]
         attributes =
             itemDetails.attributes ++ localAttributes
 
@@ -572,7 +732,7 @@ cloneItemView config draggingItem item =
             config.itemDetails item
 
         bounds =
-            BoundingBox.translate draggingItem.position draggingItem.bounds
+            BoundingBox.translate draggingItem.currentPos draggingItem.bounds
 
         topLeft =
             BoundingBox.bottomLeft bounds
@@ -598,6 +758,7 @@ cloneItemView config draggingItem item =
                 , ( "height", px height )
                 , ( "z-index", "9999" )
                 , ( "pointer-events", "none" )
+                , ( "list-style", "none" )
                 ]
             ]
 
@@ -614,7 +775,7 @@ cloneItemView config draggingItem item =
 -- Decoders
 
 
-clientXY : Json.Decoder Position
+clientXY : Json.Decoder Point
 clientXY =
     Json.map2 (,)
         (Json.field "clientX" Json.float)

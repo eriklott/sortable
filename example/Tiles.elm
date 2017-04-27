@@ -13,7 +13,7 @@ type alias Item =
 
 type alias Model =
     { items : List Item
-    , sortable : Sortable.State
+    , sortable : Sortable.Model
     }
 
 
@@ -50,43 +50,13 @@ init =
 
 type Msg
     = SortableMsg Sortable.Msg
-    | Sort Sortable.Sort
-    | NoOp
 
 
 update : Msg -> Model -> Model
 update msg model =
     case msg of
         SortableMsg msg_ ->
-            let
-                ( sortable, outMsg ) =
-                    Sortable.update Sort NoOp msg_ model.sortable
-
-                model_ =
-                    { model | sortable = sortable }
-            in
-                case outMsg of
-                    Just outMsg_ ->
-                        update outMsg_ model_
-
-                    Nothing ->
-                        model_
-
-        Sort sort ->
-            let
-                item =
-                    List.filter (\itm -> itm.id == sort.itemID) model.items
-
-                filteredItems =
-                    List.filter (\itm -> itm.id /= sort.itemID) model.items
-
-                sortedItems =
-                    List.take sort.index filteredItems ++ item ++ List.drop sort.index filteredItems
-            in
-                { model | items = sortedItems }
-
-        NoOp ->
-            model
+            { model | sortable = Sortable.update msg_ model.sortable }
 
 
 subscriptions : Model -> Sub Msg
@@ -96,7 +66,25 @@ subscriptions model =
 
 view : Model -> Html Msg
 view model =
-    Sortable.list (Sortable.config "list1" "ul" [] "li" itemView (Just "handle") SortableMsg .id) model.sortable model.items
+    Sortable.view
+        (Sortable.group
+            { toMsg = SortableMsg
+            , toID = .id
+            , lists =
+                [ Sortable.groupList
+                    { id = "list1"
+                    , tag = "ul"
+                    , attributes = []
+                    , itemTag = "li"
+                    , itemDetails = itemView
+                    , handle = Just "handle"
+                    , items = model.items
+                    }
+                ]
+            }
+            model.sortable
+        )
+        "list1"
 
 
 itemView : Item -> Sortable.ViewDetails Msg

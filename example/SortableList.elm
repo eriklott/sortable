@@ -21,15 +21,15 @@ type alias Model =
 init : ( Model, Cmd Msg )
 init =
     ( { items1 =
-            [ Item "1" "Apple"
-            , Item "2" "Orange"
-            , Item "3" "Grape"
-            , Item "4" "Banana"
-            , Item "5" "Melon"
-            , Item "6" "Strawberry"
-            , Item "7" "Orange"
-            , Item "8" "Grape"
-            , Item "9" "Banana"
+            [ Item "01" "Apple"
+            , Item "02" "Orange"
+            , Item "03" "Grape"
+            , Item "04" "Banana"
+            , Item "05" "Melon"
+            , Item "06" "Strawberry"
+            , Item "07" "Orange"
+            , Item "08" "Grape"
+            , Item "09" "Banana"
             , Item "10" "Melon"
             ]
       , items2 =
@@ -86,12 +86,21 @@ view model =
                         }
                     , Sortable.groupList
                         { id = "list2"
-                        , tag = "ul"
+                        , tag = "ol"
                         , attributes = []
                         , itemTag = "li"
                         , itemDetails = itemView
                         , handle = Nothing
                         , items = model.items2
+                        }
+                    , Sortable.groupList
+                        { id = "list3"
+                        , tag = "ul"
+                        , attributes = [ style [ ( "border", "1px solid black" ), ( "width", "400px" ), ( "min-height", "400px" ) ] ]
+                        , itemTag = "li"
+                        , itemDetails = itemView
+                        , handle = Nothing
+                        , items = []
                         }
                     ]
                 }
@@ -100,6 +109,7 @@ view model =
         div []
             [ Sortable.view sortableConfig "list1"
             , Sortable.view sortableConfig "list2"
+            , Sortable.view sortableConfig "list3"
             ]
 
 

@@ -28,6 +28,7 @@ import Dom.LowLevel as Dom
 import Json.Decode as Json
 import Process
 import Task exposing (Task)
+import Math.Vector2 as Vec2
 
 
 -- POSITIONS
@@ -38,10 +39,8 @@ scrolled down a bunch, you are still getting a coordinate relative to the
 very top left corner of the *whole* document.
 -}
 type alias Position =
-    { pageX : Float
-    , pageY : Float
-    , clientX : Float
-    , clientY : Float
+    { pageXY : Vec2.Vec2
+    , clientXY : Vec2.Vec2
     }
 
 
@@ -49,7 +48,8 @@ type alias Position =
 -}
 position : Json.Decoder Position
 position =
-    Json.map4 Position
+    Json.map4
+        (\px py cx cy -> Position (Vec2.fromTuple ( px, py )) (Vec2.fromTuple ( cx, cy )))
         (Json.field "pageX" Json.float)
         (Json.field "pageY" Json.float)
         (Json.field "clientX" Json.float)
