@@ -53,13 +53,21 @@ init =
 
 type Msg
     = SortableMsg Sortable.Msg
+    | End Sortable.Event
 
 
 update : Msg -> Model -> Model
 update msg model =
     case msg of
         SortableMsg msg_ ->
-            { model | sortable = Sortable.update msg_ model.sortable }
+            let
+                ( sortable_, _ ) =
+                    Debug.log "response" <| Sortable.update End msg_ model.sortable
+            in
+                { model | sortable = sortable_ }
+
+        End _ ->
+            model
 
 
 subscriptions : Model -> Sub Msg
