@@ -14,7 +14,7 @@ type alias Item =
 type alias Model =
     { items1 : List Item
     , items2 : List Item
-    , sortable : Sortable.Model
+    , sortable : Sortable.Model Item
     }
 
 
@@ -52,7 +52,7 @@ init =
 
 
 type Msg
-    = SortableMsg Sortable.Msg
+    = SortableMsg (Sortable.Msg Item)
     | End Sortable.Event
 
 
@@ -62,7 +62,7 @@ update msg model =
         SortableMsg msg_ ->
             let
                 ( sortable_, _ ) =
-                    Debug.log "response" <| Sortable.update End msg_ model.sortable
+                    Sortable.update msg_ model.sortable
             in
                 { model | sortable = sortable_ }
 
@@ -77,51 +77,50 @@ subscriptions model =
 
 view : Model -> Html Msg
 view model =
-    let
-        sortableConfig =
-            Sortable.group
-                { toMsg = SortableMsg
-                , toID = .id
-                , lists =
-                    [ { id = "list1"
-                      , tag = "ul"
-                      , attributes = []
-                      , canReceiveItem = always True
-                      , canRemoveItem = always True
-                      , itemTag = "li"
-                      , itemDetails = itemView
-                      , itemHandle = Nothing
-                      , items = model.items1
-                      }
-                    , { id = "list2"
-                      , tag = "ol"
-                      , attributes = []
-                      , canReceiveItem = always True
-                      , canRemoveItem = always True
-                      , itemTag = "li"
-                      , itemDetails = itemView
-                      , itemHandle = Nothing
-                      , items = model.items2
-                      }
-                    , { id = "list3"
-                      , tag = "ul"
-                      , attributes = [ style [ ( "border", "1px solid black" ), ( "width", "400px" ), ( "min-height", "400px" ) ] ]
-                      , canReceiveItem = always True
-                      , canRemoveItem = always False
-                      , itemTag = "li"
-                      , itemDetails = itemView
-                      , itemHandle = Nothing
-                      , items = []
-                      }
-                    ]
-                }
-                model.sortable
-    in
-        div []
-            [ Sortable.view sortableConfig "list1"
-            , Sortable.view sortableConfig "list2"
-            , Sortable.view sortableConfig "list3"
-            ]
+    div []
+        [ Sortable.list
+            { toMsg = SortableMsg
+            , toItemID = .id
+            , id = "list1"
+            , tag = "ul"
+            , attributes = []
+            , canReceiveItem = always True
+            , canRemoveItem = always False
+            , itemTag = "li"
+            , itemDetails = itemView
+            , itemHandle = Nothing
+            }
+            model.sortable
+            model.items1
+        , Sortable.list
+            { toMsg = SortableMsg
+            , toItemID = .id
+            , id = "list2"
+            , tag = "ol"
+            , attributes = []
+            , canReceiveItem = always True
+            , canRemoveItem = always True
+            , itemTag = "li"
+            , itemDetails = itemView
+            , itemHandle = Nothing
+            }
+            model.sortable
+            model.items2
+        , Sortable.list
+            { toMsg = SortableMsg
+            , toItemID = .id
+            , id = "list3"
+            , tag = "ul"
+            , attributes = [ style [ ( "border", "1px solid black" ), ( "width", "400px" ), ( "min-height", "400px" ) ] ]
+            , canReceiveItem = always True
+            , canRemoveItem = always True
+            , itemTag = "li"
+            , itemDetails = itemView
+            , itemHandle = Nothing
+            }
+            model.sortable
+            []
+        ]
 
 
 itemView : Item -> Sortable.ViewDetails Msg

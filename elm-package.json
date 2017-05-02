@@ -7,7 +7,7 @@
         "src"
     ],
     "exposed-modules": [
-        "Sortable"
+        "SortableList"
     ],
     "dependencies": {
         "elm-community/linear-algebra": "1.0.0 <= v < 2.0.0",

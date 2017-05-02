@@ -13,7 +13,7 @@ type alias Item =
 
 type alias Model =
     { items : List Item
-    , sortable : Sortable.Model
+    , sortable : Sortable.Model Item
     }
 
 
@@ -49,14 +49,18 @@ init =
 
 
 type Msg
-    = SortableMsg Sortable.Msg
+    = SortableMsg (Sortable.Msg Item)
 
 
 update : Msg -> Model -> Model
 update msg model =
     case msg of
         SortableMsg msg_ ->
-            { model | sortable = Sortable.update msg_ model.sortable }
+            let
+                ( sortable_, _ ) =
+                    Sortable.update msg_ model.sortable
+            in
+                { model | sortable = sortable_ }
 
 
 subscriptions : Model -> Sub Msg
@@ -66,26 +70,20 @@ subscriptions model =
 
 view : Model -> Html Msg
 view model =
-    Sortable.view
-        (Sortable.group
-            { toMsg = SortableMsg
-            , toID = .id
-            , lists =
-                [ { id = "list1"
-                  , tag = "ul"
-                  , attributes = []
-                  , canReceiveItem = always True
-                  , canRemoveItem = always True
-                  , itemTag = "li"
-                  , itemDetails = itemView
-                  , itemHandle = Just "handle"
-                  , items = model.items
-                  }
-                ]
-            }
-            model.sortable
-        )
-        "list1"
+    Sortable.list
+        { toMsg = SortableMsg
+        , toItemID = .id
+        , id = "list1"
+        , tag = "ul"
+        , attributes = []
+        , canReceiveItem = always True
+        , canRemoveItem = always False
+        , itemTag = "li"
+        , itemDetails = itemView
+        , itemHandle = Just "handle"
+        }
+        model.sortable
+        model.items
 
 
 itemView : Item -> Sortable.ViewDetails Msg
