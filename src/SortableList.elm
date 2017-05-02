@@ -400,7 +400,7 @@ targetItemView config index item =
 
         onMouseMove tagger =
             onWithOptions "mousemove"
-                { defaultOptions | preventDefault = True }
+                { defaultOptions | preventDefault = True, stopPropagation = True }
                 (Json.succeed tagger)
 
         localAttributes =
